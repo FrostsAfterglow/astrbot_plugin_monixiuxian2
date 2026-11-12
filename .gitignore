@@ -1,0 +1,34 @@
+# ===== Python 字节码 / 缓存 =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.Python
+build/
+dist/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== 运行时用户数据（切勿提交！含玩家存档/数据库）=====
+data/plugin_data/
+plugin_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 操作系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# ===== 日志 =====
+*.log
+logs/
