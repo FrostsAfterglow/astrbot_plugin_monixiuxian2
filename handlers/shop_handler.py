@@ -102,43 +102,77 @@ class ShopHandler:
                         return pavilion_id, item
         return None, None
 
-    @player_required
-    async def handle_buy(self, player: Player, event: AstrMessageEvent, item_name: str = ""):
-        """处理购买物品命令"""
-        if not item_name or item_name.strip() == "":
-            yield event.plain_result("请指定要购买的物品名称，例如：购买 青铜剑")
-            return
+    @staticmethod
+    def _parse_buy_target(item_name: str, event) -> tuple:
+        """解析购买指令中的物品名与数量。
 
-        # 兼容全角空格/数字与“x10”写法
-        normalized = item_name.strip().replace("　", " ")
-        normalized = normalized.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-        quantity = 1
-        item_part = normalized
+        兼容全角空格/数字、``x10`` 写法；当指令参数仅含名称时，
+        再从原始消息兜底解析一次数量。
+        返回 ``(名称, 数量)``。
+        """
 
-        def parse_qty(text: str):
+        def parse(text: str):
+            text = text.strip().replace("　", " ")
+            text = text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             text = re.sub(r"\s+", " ", text)
             m = re.match(r"^(.*?)(?:\s+(\d+)|[xX＊*]\s*(\d+))$", text)
             if m:
                 part = m.group(1).strip()
-                qty_str = m.group(2) or m.group(3)
-                return part, max(1, int(qty_str))
+                qty = int(m.group(2) or m.group(3))
+                return part, max(1, qty)
             return text.strip(), 1
 
-        item_part, quantity = parse_qty(normalized)
-
-        # 若指令解析只传入物品名（忽略数量），尝试从原始消息再解析一次
-        if quantity == 1:
+        name, qty = parse(item_name or "")
+        # 指令参数仅含名称时，从原始消息兜底解析数量
+        if qty == 1:
             try:
-                raw_msg = event.get_message_str().strip()
-                if raw_msg.startswith("购买"):
-                    raw_msg = raw_msg[len("购买"):].strip()
-                raw_msg = raw_msg.replace("　", " ")
-                raw_msg = raw_msg.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-                item_part, quantity = parse_qty(raw_msg)
+                raw = event.get_message_str().strip()
+                if raw.startswith("购买"):
+                    raw = raw[len("购买"):].strip()
+                name, qty = parse(raw)
             except Exception:
                 pass
+        return name, qty
 
-        item_name = item_part
+    async def _grant_purchased_item(self, player: Player, target_item: dict, quantity: int) -> tuple:
+        """按物品类型把已购物品发放到玩家（储物戒/丹药背包/即时生效）。
+
+        返回 ``(是否成功, 提示文本)``；失败提示用于在事务内回滚。
+        """
+        item_type = target_item['type']
+        name = target_item['name']
+
+        # 储物类：武器/防具/心法/功法/饰品/材料
+        if item_type in ('weapon', 'armor', 'main_technique', 'technique', 'accessory', 'material'):
+            label = {
+                'weapon': '武器', 'armor': '防具', 'main_technique': '心法',
+                'technique': '功法', 'accessory': '饰品', 'material': '材料',
+            }.get(item_type, '物品')
+            success, msg = await self.storage_ring_manager.store_item(
+                player, name, quantity, external_transaction=True)
+            if success:
+                return True, f"成功购买{label}【{name}】x{quantity}，已存入储物戒。"
+            return True, f"成功购买【{name}】x{quantity}。\n⚠️ 存入储物戒失败：{msg}"
+
+        if item_type in ('pill', 'exp_pill', 'utility_pill'):
+            await self.pill_manager.add_pill_to_inventory(player, name, count=quantity)
+            return True, f"成功购买【{name}】x{quantity}，已添加到背包。"
+
+        if item_type == 'legacy_pill':
+            success, message = await self._apply_legacy_pill_effects(player, target_item, quantity)
+            if not success:
+                return False, message
+            return True, message
+
+        return False, f"未知的物品类型：{item_type}"
+
+    @player_required
+    async def handle_buy(self, player: Player, event: AstrMessageEvent, item_name: str = ""):
+        """处理购买物品命令"""
+        item_name, quantity = self._parse_buy_target(item_name, event)
+        if not item_name:
+            yield event.plain_result("请指定要购买的物品名称，例如：购买 青铜剑")
+            return
 
         pavilion_id, target_item = await self._find_item_in_pavilions(item_name)
         if not target_item:
@@ -177,19 +211,11 @@ class ShopHandler:
         total_price = unit_final * quantity
         total_original = original_price * quantity
 
-        if player.gold < total_price:
-            vip_hint = "（会员价）" if is_vip else ""
-            yield event.plain_result(
-                f"灵石不足！\n【{target_item['name']}】单价: {unit_final} 灵石{vip_hint}\n"
-                f"购买数量: {quantity}\n需要灵石: {total_price}\n你的灵石: {player.gold}"
-            )
-            return
-
-        item_type = target_item['type']
         result_lines = []
 
         await self.db.conn.execute("BEGIN IMMEDIATE")
         try:
+            # 事务内重新读取玩家，确保扣费基于最新数据（单一权威校验）
             player = await self.db.get_player_by_id(user_id)
             if player.gold < total_price:
                 await self.db.conn.rollback()
@@ -206,36 +232,12 @@ class ShopHandler:
                 yield event.plain_result(f"【{item_name}】已售罄，请等待刷新。")
                 return
 
-            # 合并「功法」与装备分支（旧代码里中文『功法』为冗余死分支，现已并入 technique 处理）
-            if item_type in ['weapon', 'armor', 'main_technique', 'technique', 'accessory', '功法']:
-                success, msg = await self.storage_ring_manager.store_item(player, target_item['name'], quantity, external_transaction=True)
-                type_name = {"weapon": "武器", "armor": "防具", "main_technique": "心法", "technique": "功法", "accessory": "饰品", "功法": "功法"}.get(item_type, "装备")
-                if success:
-                    result_lines.append(f"成功购买{type_name}【{target_item['name']}】x{quantity}，已存入储物戒。")
-                else:
-                    result_lines.append(f"成功购买【{target_item['name']}】x{quantity}。")
-                    result_lines.append(f"⚠️ 存入储物戒失败：{msg}")
-            elif item_type in ['pill', 'exp_pill', 'utility_pill']:
-                await self.pill_manager.add_pill_to_inventory(player, target_item['name'], count=quantity)
-                result_lines.append(f"成功购买【{target_item['name']}】x{quantity}，已添加到背包。")
-            elif item_type == 'legacy_pill':
-                success, message = await self._apply_legacy_pill_effects(player, target_item, quantity)
-                if not success:
-                    await self.db.conn.rollback()
-                    yield event.plain_result(message)
-                    return
-                result_lines.append(message)
-            elif item_type == 'material':
-                success, msg = await self.storage_ring_manager.store_item(player, target_item['name'], quantity, external_transaction=True)
-                if success:
-                    result_lines.append(f"成功购买材料【{target_item['name']}】x{quantity}，已存入储物戒。")
-                else:
-                    result_lines.append(f"成功购买材料【{target_item['name']}】x{quantity}。")
-                    result_lines.append(f"⚠️ 存入储物戒失败：{msg}")
-            else:
+            granted, grant_msg = await self._grant_purchased_item(player, target_item, quantity)
+            if not granted:
                 await self.db.conn.rollback()
-                yield event.plain_result(f"未知的物品类型：{item_type}")
+                yield event.plain_result(grant_msg)
                 return
+            result_lines.append(grant_msg)
 
             player.gold -= total_price
             await self.db.update_player(player)
@@ -389,7 +391,6 @@ class ShopHandler:
             # 处理突破成功率加成（添加为临时效果，持续1小时）
             if 'add_breakthrough_bonus' in effects:
                 bonus = effects['add_breakthrough_bonus']
-                import time
                 current_effects = player.get_active_pill_effects()
                 new_effect = {
                     "pill_name": pill_name,

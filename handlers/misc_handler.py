@@ -14,7 +14,7 @@ class MiscHandler:
     async def handle_help(self, event: AstrMessageEvent):
         """显示帮助信息"""
         help_text = (
-            "📖 修仙指令大全 v3.3.0\n"
+            "📖 修仙指令大全 v3.3.2\n"
             "━━━━━━━━━━━━━━━\n"
             "\n"
             "📖【入门 & 基础】\n"
@@ -57,6 +57,9 @@ class MiscHandler:
             "    └─ 会员(SHOP_VIP_USERS)自动享受 SHOP_VIP_DISCOUNT 折扣\n"
             "  物品信息 <名称>\n"
             "    └─ 查询物品/丹药效果与获取途径\n"
+            "  🆕 新增商品: 裂空神枪/九霄雷符/玄黄丹鼎(武器)\n"
+            "     太上感应篇(功法)/混元一气幡(法器)/万年温玉(材料)\n"
+            "     九转还魂丹(丹药)/化仙丹(破境丹) 等\n"
             "\n"
             "📦【储物戒系统】(物品中央枢纽)\n"
             "  储物戒 → 查看储物空间和物品（分类显示）\n"

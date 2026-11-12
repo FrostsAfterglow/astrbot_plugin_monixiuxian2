@@ -13,6 +13,17 @@ if "/workspace" not in sys.path:
     sys.path.insert(0, "/workspace")
 
 from astrbot_plugin_monixiuxian2.core.shop_manager import ShopManager  # noqa: E402
+from astrbot_plugin_monixiuxian2.handlers.shop_handler import ShopHandler  # noqa: E402
+
+
+class _FakeEvent:
+    """最小事件替身，仅实现 get_message_str()。"""
+
+    def __init__(self, msg: str):
+        self._msg = msg
+
+    def get_message_str(self):
+        return self._msg
 
 
 class _FakeConfig:
@@ -112,6 +123,37 @@ def test_expanded_items_loaded():
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert data, f"{fname} 为空或非法"
+
+
+def test_parse_buy_target_basic():
+    """基础解析：纯物品名 / 空格数量 / x10 写法。"""
+    ev = _FakeEvent("购买 青铜剑")
+    assert ShopHandler._parse_buy_target("青铜剑", ev) == ("青铜剑", 1)
+    assert ShopHandler._parse_buy_target("青铜剑 5", ev) == ("青铜剑", 5)
+    assert ShopHandler._parse_buy_target("青铜剑x10", ev) == ("青铜剑", 10)
+    # 数量至少 1
+    assert ShopHandler._parse_buy_target("青铜剑 0", ev) == ("青铜剑", 1)
+
+
+def test_parse_buy_target_fullwidth():
+    """兼容全角空格与全角数字。"""
+    ev = _FakeEvent("购买 九霄雷符")
+    assert ShopHandler._parse_buy_target("九霄雷符　３", ev) == ("九霄雷符", 3)
+
+
+def test_parse_buy_target_raw_fallback():
+    """指令参数仅含名称时，从原始消息兜底解析数量。"""
+    ev = _FakeEvent("购买 玄黄丹鼎 8")
+    # 参数只传了名称（数量为 1），应回溯原始消息得到 8
+    name, qty = ShopHandler._parse_buy_target("玄黄丹鼎", ev)
+    assert name == "玄黄丹鼎"
+    assert qty == 8
+
+
+def test_parse_buy_target_empty():
+    """空输入返回空名称，触发「请指定物品」提示。"""
+    ev = _FakeEvent("购买")
+    assert ShopHandler._parse_buy_target("", ev) == ("", 1)
 
 
 if __name__ == "__main__":

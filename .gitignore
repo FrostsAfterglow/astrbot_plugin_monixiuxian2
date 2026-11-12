@@ -32,3 +32,7 @@ Thumbs.db
 # ===== 日志 =====
 *.log
 logs/
+
+# AstrBot 框架运行期文件（非插件源码，勿提交）
+data/cmd_config.json
+data/t2i_templates/
