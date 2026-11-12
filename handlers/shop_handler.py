@@ -41,6 +41,8 @@ class ShopHandler:
             str(user_id)
             for user_id in access_control.get("SHOP_MANAGERS", [])
         }
+        # 购买冷却记录（内存表）：user_id -> 上次购买时间戳（防刷，重启后清空）
+        self._buy_cooldowns: dict = {}
 
     async def _ensure_pavilion_refreshed(self, pavilion_id: str, item_getter, count: int) -> None:
         """确保阁楼已刷新"""
@@ -148,11 +150,37 @@ class ShopHandler:
             yield event.plain_result(f"【{item_name}】库存不足，当前库存: {stock}。")
             return
 
-        price = target_item['price']
-        total_price = price * quantity
+        # 限购：单次购买数量上限
+        buy_limit = int(self.config.get("SHOP_BUY_LIMIT", 0) or 0)
+        if buy_limit > 0 and quantity > buy_limit:
+            yield event.plain_result(f"单次限购 {buy_limit} 个，您想购买 {quantity} 个，请分次购买。")
+            return
+
+        # 购买冷却（防刷）
+        user_id = event.get_sender_id()
+        cooldown = int(self.config.get("SHOP_BUY_COOLDOWN", 0) or 0)
+        if cooldown > 0:
+            last_buy = self._buy_cooldowns.get(user_id, 0)
+            now_ts = int(time.time())
+            remain = cooldown - (now_ts - last_buy)
+            if last_buy and remain > 0:
+                yield event.plain_result(f"购买过于频繁，请 {remain} 秒后再试。")
+                return
+
+        # 价格计算（含会员折扣）
+        base_price = target_item['price']
+        original_price = target_item.get('original_price', base_price)
+        shop_discount = target_item.get('discount', 1.0)
+        is_vip = self.shop_manager.is_vip(user_id)
+        vip_rate = self.shop_manager.vip_discount_rate() if is_vip else 1.0
+        unit_final = max(1, round(base_price * vip_rate))
+        total_price = unit_final * quantity
+        total_original = original_price * quantity
+
         if player.gold < total_price:
+            vip_hint = "（会员价）" if is_vip else ""
             yield event.plain_result(
-                f"灵石不足！\n【{target_item['name']}】价格: {price} 灵石\n"
+                f"灵石不足！\n【{target_item['name']}】单价: {unit_final} 灵石{vip_hint}\n"
                 f"购买数量: {quantity}\n需要灵石: {total_price}\n你的灵石: {player.gold}"
             )
             return
@@ -162,11 +190,12 @@ class ShopHandler:
 
         await self.db.conn.execute("BEGIN IMMEDIATE")
         try:
-            player = await self.db.get_player_by_id(event.get_sender_id())
+            player = await self.db.get_player_by_id(user_id)
             if player.gold < total_price:
                 await self.db.conn.rollback()
+                vip_hint = "（会员价）" if is_vip else ""
                 yield event.plain_result(
-                    f"灵石不足！\n【{target_item['name']}】价格: {price} 灵石\n"
+                    f"灵石不足！\n【{target_item['name']}】单价: {unit_final} 灵石{vip_hint}\n"
                     f"购买数量: {quantity}\n需要灵石: {total_price}\n你的灵石: {player.gold}"
                 )
                 return
@@ -177,10 +206,11 @@ class ShopHandler:
                 yield event.plain_result(f"【{item_name}】已售罄，请等待刷新。")
                 return
 
-            if item_type in ['weapon', 'armor', 'main_technique', 'technique', 'accessory']:
+            # 合并「功法」与装备分支（旧代码里中文『功法』为冗余死分支，现已并入 technique 处理）
+            if item_type in ['weapon', 'armor', 'main_technique', 'technique', 'accessory', '功法']:
                 success, msg = await self.storage_ring_manager.store_item(player, target_item['name'], quantity, external_transaction=True)
+                type_name = {"weapon": "武器", "armor": "防具", "main_technique": "心法", "technique": "功法", "accessory": "饰品", "功法": "功法"}.get(item_type, "装备")
                 if success:
-                    type_name = {"weapon": "武器", "armor": "防具", "main_technique": "心法", "technique": "功法", "accessory": "饰品"}.get(item_type, "装备")
                     result_lines.append(f"成功购买{type_name}【{target_item['name']}】x{quantity}，已存入储物戒。")
                 else:
                     result_lines.append(f"成功购买【{target_item['name']}】x{quantity}。")
@@ -202,13 +232,6 @@ class ShopHandler:
                 else:
                     result_lines.append(f"成功购买材料【{target_item['name']}】x{quantity}。")
                     result_lines.append(f"⚠️ 存入储物戒失败：{msg}")
-            elif item_type == '功法':
-                success, msg = await self.storage_ring_manager.store_item(player, target_item['name'], quantity, external_transaction=True)
-                if success:
-                    result_lines.append(f"成功购买功法【{target_item['name']}】x{quantity}，已存入储物戒。")
-                else:
-                    result_lines.append(f"成功购买功法【{target_item['name']}】x{quantity}。")
-                    result_lines.append(f"⚠️ 存入储物戒失败：{msg}")
             else:
                 await self.db.conn.rollback()
                 yield event.plain_result(f"未知的物品类型：{item_type}")
@@ -217,8 +240,23 @@ class ShopHandler:
             player.gold -= total_price
             await self.db.update_player(player)
             await self.db.conn.commit()
-            
-            result_lines.append(f"花费灵石: {total_price}，剩余: {player.gold}")
+
+            # 记录购买冷却（防刷）
+            if cooldown > 0:
+                self._buy_cooldowns[user_id] = int(time.time())
+
+            # 回执：显示原价 / 商店折扣 / 会员折扣 / 实付 / 省下灵石
+            result_lines.append("——")
+            if original_price != base_price:
+                result_lines.append(f"原价: {total_original} 灵石（商店{shop_discount * 10:.1f}折）")
+            else:
+                result_lines.append(f"原价: {total_original} 灵石")
+            if is_vip:
+                result_lines.append(f"会员折扣: {vip_rate * 10:.1f}折")
+            result_lines.append(f"实付: {total_price} 灵石（剩余 {player.gold}）")
+            saved = total_original - total_price
+            if saved > 0:
+                result_lines.append(f"共省下: {saved} 灵石")
             result_lines.append(f"剩余库存: {remaining}" if remaining > 0 else "该物品已售罄！")
             yield event.plain_result("\n".join(result_lines))
         except Exception as e:

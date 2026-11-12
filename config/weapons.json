@@ -1798,5 +1798,50 @@
     "mental_power": 6500,
     "price": 3183850,
     "shop_weight": 0.1
+  },
+  {
+    "id": "new_spear_001",
+    "name": "裂空神枪",
+    "type": "weapon",
+    "weapon_category": "枪",
+    "rank": "天品",
+    "required_level_index": 18,
+    "description": "蕴含空间之力的神枪，一击可裂长空。",
+    "magic_damage": 220,
+    "physical_damage": 260,
+    "physical_defense": 80,
+    "mental_power": 150,
+    "price": 88000,
+    "shop_weight": 60
+  },
+  {
+    "id": "new_talisman_001",
+    "name": "九霄雷符",
+    "type": "weapon",
+    "weapon_category": "符箓",
+    "rank": "地品",
+    "required_level_index": 12,
+    "description": "封印九霄雷霆之力的符箓，爆发惊人。",
+    "magic_damage": 180,
+    "physical_damage": 20,
+    "physical_defense": 10,
+    "mental_power": 120,
+    "price": 32000,
+    "shop_weight": 120
+  },
+  {
+    "id": "new_cauldron_001",
+    "name": "玄黄丹鼎",
+    "type": "weapon",
+    "weapon_category": "鼎",
+    "rank": "灵品",
+    "required_level_index": 6,
+    "description": "辅助炼丹的玄黄宝鼎，亦可作防身法器。",
+    "magic_damage": 40,
+    "physical_damage": 30,
+    "physical_defense": 60,
+    "mental_power": 90,
+    "price": 9000,
+    "shop_weight": 200
   }
 ]

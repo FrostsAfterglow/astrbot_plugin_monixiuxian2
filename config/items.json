@@ -751,5 +751,46 @@
         "description": "魔道无上功法，吞噬万物本源，禁忌的存在。",
         "price": 6666666,
         "shop_weight": 20
+    },
+    "9001": {
+        "name": "太上感应篇",
+        "type": "功法",
+        "rank": "天品",
+        "description": "上古流传的修炼宝典，修炼后可大幅提升灵气上限与法伤。",
+        "price": 120000,
+        "shop_weight": 40
+    },
+    "9002": {
+        "name": "混元一气幡",
+        "type": "法器",
+        "subtype": "武器",
+        "rank": "地品",
+        "description": "可收混元之气伤敌的法器，攻守兼备。",
+        "price": 45000,
+        "equip_effects": {
+            "attack": 160,
+            "magic": 60
+        },
+        "shop_weight": 90
+    },
+    "9003": {
+        "name": "万年温玉",
+        "type": "材料",
+        "rank": "天品",
+        "description": "温养神魂的万年奇玉，炼器炼丹的极品材料。",
+        "price": 60000,
+        "shop_weight": 50
+    },
+    "9004": {
+        "name": "九转还魂丹",
+        "type": "丹药",
+        "rank": "天品",
+        "description": "传说中的续命圣丹，可大幅恢复气血与修为。",
+        "price": 98000,
+        "effect": {
+            "add_hp": 5000,
+            "add_experience": 3000
+        },
+        "shop_weight": 30
     }
 }

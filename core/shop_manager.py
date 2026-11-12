@@ -16,6 +16,29 @@ class ShopManager:
         self.config = config
         self.config_manager = config_manager
 
+    # ===== 会员/VIP 折扣 =====
+    def get_vip_users(self) -> set:
+        """返回配置了会员折扣的用户ID集合（字符串）"""
+        access = self.config.get("ACCESS_CONTROL", {})
+        if not isinstance(access, dict):
+            access = {}
+        return {str(u) for u in access.get("SHOP_VIP_USERS", [])}
+
+    def is_vip(self, user_id: str) -> bool:
+        """判断用户是否为会员（享受折扣）"""
+        return str(user_id) in self.get_vip_users()
+
+    def vip_discount_rate(self) -> float:
+        """会员折扣率（1.0 表示无折扣）；配置非法时回退为 1.0"""
+        try:
+            rate = float(self.config.get("SHOP_VIP_DISCOUNT", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            rate = 1.0
+        # 折扣应在 (0, 1] 区间，超出则视为无效
+        if rate <= 0 or rate > 1.0:
+            rate = 1.0
+        return rate
+
     def _format_required_level(self, level_index: int) -> str:
         """同时展示灵修/体修的需求境界名称"""
         names = []

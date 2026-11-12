@@ -20,6 +20,12 @@
         "type": "list",
         "default": [],
         "hint": "可以手动生成Boss的用户ID（字符串）。为空则不允许任何人手动生成Boss。"
+      },
+      "SHOP_VIP_USERS": {
+        "description": "商店会员(享受折扣)用户名单",
+        "type": "list",
+        "default": [],
+        "hint": "在此填写用户ID（字符串），这些用户在商店购买时自动享受 SHOP_VIP_DISCOUNT 设定的折扣。为空则无人享受会员折扣。"
       }
     }
   },
@@ -98,6 +104,24 @@
         "type": "int",
         "default": 100,
         "hint": "库存=物品权重/基数。基数越大，库存越少。"
+      },
+      "SHOP_BUY_LIMIT": {
+        "description": "单次购买数量上限",
+        "type": "int",
+        "default": 0,
+        "hint": "单次购买同一物品的最大数量。设为 0 表示不限制。"
+      },
+      "SHOP_BUY_COOLDOWN": {
+        "description": "购买冷却时间（秒）",
+        "type": "int",
+        "default": 0,
+        "hint": "两次购买之间的最小间隔（秒），用于防止连刷刷库存。设为 0 表示无冷却。"
+      },
+      "SHOP_VIP_DISCOUNT": {
+        "description": "会员购买折扣率",
+        "type": "float",
+        "default": 1.0,
+        "hint": "对 SHOP_VIP_USERS 名单内用户的折扣率（0~1）。1.0 表示无折扣，0.9 表示9折。配置非法时自动视为无折扣。"
       }
     }
   },
