@@ -4,7 +4,7 @@
   <img src="logo.png" alt="模拟修仙" width="200">
 </p>
 
-> **版本:** v3.3.3  
+> **版本:** v3.3.4  
 > **许可证:** AGPL-3.0  
 > **作者:** xiaojuwa  
 > **基于:** [nonebot_plugin_xiuxian_2](https://github.com/xiuxian-2/nonebot_plugin_xiuxian_2) (部分借鉴与重构)
@@ -318,6 +318,32 @@ astrbot_plugin_monixiuxian2/
 ---
 
 ## 📝 更新日志
+
+### v3.3.4 - 修复「道具与实际使用不符」（商店道具购买失败）
+
+**🐛 问题现象**
+- 丹药 / 材料 / 法器 / 功法 四大类共 71 个 `items.json` 道具（含帮助里宣传的
+  太上感应篇 / 混元一气幡 / 万年温玉 / 九转还魂丹 等），在商店列表里看得见、
+  `/物品信息` 也查得到，但**一买就提示「未知的物品类型：丹药/材料/法器/功法」**，
+  扣费事务回滚、道具无法发放。
+
+**🔍 根因**
+- `items.json` 使用的是中文类型，而 `ShopManager._get_all_shop_items`（生成商店库存）
+  直接把中文类型写进库存；展示路径（`get_all_items_for_display`）与查询路径
+  （`find_item_by_name`）却都调用了 `_map_legacy_item_type` 做映射。
+- 结果：购买时 `_grant_purchased_item` 从库存读回的是中文类型，只认英文类型的
+  发放逻辑全部落入「未知的物品类型」分支而失败。
+- v3.3.2 重构时曾把中文分支误判为「死分支」删除，放大了该问题。
+
+**✅ 修复**
+- `core/shop_manager.py`：生成商店库存时对 `items.json` 道具统一调用
+  `_map_legacy_item_type`，与展示 / 查询路径对齐。
+- `handlers/shop_handler.py`：新增 `_normalize_item_type` 兜底归一化，
+  **兼容升级前已写入数据库的旧库存**（老存档无需重置即可正常购买）。
+- 新增回归测试 `tests/test_item_type_consistency.py`（4 项），
+  覆盖「全部道具类型可发放 / 中文类型完整映射 / 旧库存兜底 / 新商品可购买」。
+
+> 购买价格、折扣、限购、冷却、回执等行为均保持不变。
 
 ### v3.3.3 - 新增「限定阁购买」指令格式
 

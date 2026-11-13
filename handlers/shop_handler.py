@@ -28,6 +28,23 @@ class ShopHandler:
         'material': "历练、秘境、悬赏、灵田收获与百宝阁限量",
     }
 
+    # items.json 历史中文类型 -> 发放逻辑识别的英文类型。
+    # 与 ShopManager._map_legacy_item_type 保持一致，用于兼容升级前已入库的旧库存。
+    _CN_TYPE_MAP = {
+        '武器': 'weapon', '防具': 'armor', '饰品': 'accessory',
+        '心法': 'main_technique', '功法': 'technique',
+        '材料': 'material', '丹药': 'legacy_pill',
+    }
+
+    @classmethod
+    def _normalize_item_type(cls, item: dict) -> str:
+        """把商店物品的中文类型归一化为英文类型（兼容旧库存数据）。"""
+        t = item.get('type', '')
+        if t == '法器':
+            sub = (item.get('data') or {}).get('subtype', '') or item.get('subtype', '')
+            return {'武器': 'weapon', '防具': 'armor', '饰品': 'accessory'}.get(sub, 'weapon')
+        return cls._CN_TYPE_MAP.get(t, t)
+
     def __init__(self, db: DataBase, config: AstrBotConfig, config_manager: ConfigManager):
         self.db = db
         self.config = config
@@ -171,7 +188,9 @@ class ShopHandler:
 
         返回 ``(是否成功, 提示文本)``；失败提示用于在事务内回滚。
         """
-        item_type = target_item['type']
+        # items.json 历史上使用中文类型，升级前已写入数据库的商店库存仍是中文。
+        # 这里做一次兜底归一化，保证老存档玩家也能正常购买这些道具。
+        item_type = self._normalize_item_type(target_item)
         name = target_item['name']
 
         # 储物类：武器/防具/心法/功法/饰品/材料

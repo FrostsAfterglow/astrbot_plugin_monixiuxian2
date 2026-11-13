@@ -72,12 +72,15 @@ class ShopManager:
                 })
 
         # 添加物品（防具、心法、功法）
+        # 注意：items.json 使用中文类型（丹药/材料/法器/功法），必须映射到发放逻辑
+        # 识别的英文类型，否则玩家购买时会命中「未知的物品类型」而发放失败。
+        # 与 get_all_items_for_display / find_item_by_name 的映射保持一致。
         for item in self.config_manager.items_data.values():
             if item.get('shop_weight', 0) > 0 and item.get('price', 0) > 0:
                 all_items.append({
                     'id': item.get('id', item['name']),
                     'name': item['name'],
-                    'type': item['type'],
+                    'type': self._map_legacy_item_type(item),
                     'price': item['price'],
                     'weight': item['shop_weight'],
                     'rank': item.get('rank', '凡品'),
