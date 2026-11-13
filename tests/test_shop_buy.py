@@ -156,5 +156,37 @@ def test_parse_buy_target_empty():
     assert ShopHandler._parse_buy_target("", ev) == ("", 1)
 
 
+def test_extract_buy_rest_basic():
+    """_extract_buy_rest 从原始消息提取「购买」之后的物品与数量。"""
+    assert ShopHandler._extract_buy_rest("/丹阁 购买 炼气丹 1") == "炼气丹 1"
+    assert ShopHandler._extract_buy_rest("丹阁 购买 炼气丹 5") == "炼气丹 5"
+    assert ShopHandler._extract_buy_rest("器阁 购买 裂空神枪") == "裂空神枪"
+    assert ShopHandler._extract_buy_rest("百宝阁 购买 太上感应篇 x2") == "太上感应篇 x2"
+    # 不含「购买」返回空串（展示列表分支）
+    assert ShopHandler._extract_buy_rest("丹阁") == ""
+    assert ShopHandler._extract_buy_rest("") == ""
+
+
+def test_parse_buy_target_no_raw_fallback_ignores_pavilion_prefix():
+    """限定阁购买时关闭原始消息兜底，``/丹阁 购买 ...`` 不得被误当成物品名。
+
+    复刻 _buy_from_pavilion 的真实调用：rest 已去掉「购买」，raw 仍带「丹阁」
+    前缀；若仍走兜底，name 会被解析成「丹阁 购买 炼气丹」之类的错误值。
+    """
+    ev = _FakeEvent("/丹阁 购买 炼气丹 1")
+    rest = ShopHandler._extract_buy_rest(ev.get_message_str())
+    assert rest == "炼气丹 1"
+    name, qty = ShopHandler._parse_buy_target(rest, ev, use_raw_fallback=False)
+    assert name == "炼气丹"
+    assert qty == 1
+
+
+def test_pavilion_label_does_not_break_parsing():
+    """即便原始消息含多个「购买」字样，也只取最后一段之后的内容。"""
+    ev = _FakeEvent("百宝阁 购买 限购购买礼包 3")
+    rest = ShopHandler._extract_buy_rest(ev.get_message_str())
+    assert rest == "限购购买礼包 3"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

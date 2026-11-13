@@ -56,8 +56,16 @@ class ShopHandler:
             new_items = self.shop_manager.generate_pavilion_items(item_getter, count)
             await self.db.update_shop_data(pavilion_id, int(time.time()), new_items)
 
-    async def handle_pill_pavilion(self, event: AstrMessageEvent):
-        """处理丹阁命令 - 展示丹药列表"""
+    async def handle_pill_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        """处理丹阁命令 - 展示丹药列表 / 支持「丹阁 购买 <物品> [数量]」"""
+        args = (args or "").strip()
+        if args:
+            if args.startswith("购买"):
+                async for r in self._buy_from_pavilion(event, "pill_pavilion", "丹阁"):
+                    yield r
+                return
+            yield event.plain_result("用法：丹阁 购买 <物品名> [数量]，或单独发送「丹阁」查看丹药列表。")
+            return
         count = self.config.get("PAVILION_PILL_COUNT", 10)
         await self._ensure_pavilion_refreshed("pill_pavilion", self.shop_manager.get_pills_for_display, count)
         last_refresh, items = await self.db.get_shop_data("pill_pavilion")
@@ -68,8 +76,16 @@ class ShopHandler:
         display = self.shop_manager.format_pavilion_display("丹阁", items, refresh_hours, last_refresh)
         yield event.plain_result(display)
 
-    async def handle_weapon_pavilion(self, event: AstrMessageEvent):
-        """处理器阁命令 - 展示武器列表"""
+    async def handle_weapon_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        """处理器阁命令 - 展示武器列表 / 支持「器阁 购买 <物品> [数量]」"""
+        args = (args or "").strip()
+        if args:
+            if args.startswith("购买"):
+                async for r in self._buy_from_pavilion(event, "weapon_pavilion", "器阁"):
+                    yield r
+                return
+            yield event.plain_result("用法：器阁 购买 <物品名> [数量]，或单独发送「器阁」查看武器列表。")
+            return
         count = self.config.get("PAVILION_WEAPON_COUNT", 10)
         await self._ensure_pavilion_refreshed("weapon_pavilion", self.shop_manager.get_weapons_for_display, count)
         last_refresh, items = await self.db.get_shop_data("weapon_pavilion")
@@ -80,8 +96,16 @@ class ShopHandler:
         display = self.shop_manager.format_pavilion_display("器阁", items, refresh_hours, last_refresh)
         yield event.plain_result(display)
 
-    async def handle_treasure_pavilion(self, event: AstrMessageEvent):
-        """处理百宝阁命令 - 展示所有物品"""
+    async def handle_treasure_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        """处理百宝阁命令 - 展示所有物品 / 支持「百宝阁 购买 <物品> [数量]」"""
+        args = (args or "").strip()
+        if args:
+            if args.startswith("购买"):
+                async for r in self._buy_from_pavilion(event, "treasure_pavilion", "百宝阁"):
+                    yield r
+                return
+            yield event.plain_result("用法：百宝阁 购买 <物品名> [数量]，或单独发送「百宝阁」查看物品列表。")
+            return
         count = self.config.get("PAVILION_TREASURE_COUNT", 15)
         await self._ensure_pavilion_refreshed("treasure_pavilion", self.shop_manager.get_all_items_for_display, count)
         last_refresh, items = await self.db.get_shop_data("treasure_pavilion")
@@ -92,23 +116,31 @@ class ShopHandler:
         display = self.shop_manager.format_pavilion_display("百宝阁", items, refresh_hours, last_refresh)
         yield event.plain_result(display)
 
-    async def _find_item_in_pavilions(self, item_name: str):
-        """在所有阁楼中查找物品"""
-        for pavilion_id in ["pill_pavilion", "weapon_pavilion", "treasure_pavilion"]:
-            _, items = await self.db.get_shop_data(pavilion_id)
+    async def _find_item_in_pavilions(self, item_name: str, pavilion_id: str = None):
+        """在所有阁楼（或指定 ``pavilion_id`` 阁楼）中查找物品。"""
+        if pavilion_id:
+            pavilions = [pavilion_id]
+        else:
+            pavilions = ["pill_pavilion", "weapon_pavilion", "treasure_pavilion"]
+        for pid in pavilions:
+            _, items = await self.db.get_shop_data(pid)
             if items:
                 for item in items:
                     if item['name'] == item_name and item.get('stock', 0) > 0:
-                        return pavilion_id, item
+                        return pid, item
         return None, None
 
     @staticmethod
-    def _parse_buy_target(item_name: str, event) -> tuple:
+    def _parse_buy_target(item_name: str, event, use_raw_fallback: bool = True) -> tuple:
         """解析购买指令中的物品名与数量。
 
-        兼容全角空格/数字、``x10`` 写法；当指令参数仅含名称时，
-        再从原始消息兜底解析一次数量。
+        兼容全角空格/数字、``x10`` 写法；当指令参数仅含名称且
+        ``use_raw_fallback`` 为真时，再从原始消息兜底解析一次数量。
         返回 ``(名称, 数量)``。
+
+        ``use_raw_fallback`` 在「限定阁购买」(如 ``/丹阁 购买 炼气丹 1``)
+        场景必须置为 ``False``，否则原始消息 ``/丹阁 购买 ...`` 会被整体
+        当成物品名误解析。
         """
 
         def parse(text: str):
@@ -124,7 +156,7 @@ class ShopHandler:
 
         name, qty = parse(item_name or "")
         # 指令参数仅含名称时，从原始消息兜底解析数量
-        if qty == 1:
+        if qty == 1 and use_raw_fallback:
             try:
                 raw = event.get_message_str().strip()
                 if raw.startswith("购买"):
@@ -168,15 +200,57 @@ class ShopHandler:
 
     @player_required
     async def handle_buy(self, player: Player, event: AstrMessageEvent, item_name: str = ""):
-        """处理购买物品命令"""
+        """处理全局购买物品命令（/购买 <物品> [数量]）"""
         item_name, quantity = self._parse_buy_target(item_name, event)
         if not item_name:
             yield event.plain_result("请指定要购买的物品名称，例如：购买 青铜剑")
             return
+        async for r in self._purchase_core(player, event, item_name, quantity):
+            yield r
 
-        pavilion_id, target_item = await self._find_item_in_pavilions(item_name)
+    @staticmethod
+    def _extract_buy_rest(raw: str) -> str:
+        """从原始消息提取「购买」之后的 ``<物品> [数量]``。
+
+        例如 ``/丹阁 购买 炼气丹 1`` -> ``炼气丹 1``；不含「购买」则返回空串。
+        """
+        m = re.search(r"购买\s*(.*)$", raw or "")
+        return m.group(1).strip() if m else ""
+
+    @player_required
+    async def _buy_from_pavilion(self, player: Player, event: AstrMessageEvent,
+                                pavilion_id: str, pavilion_label: str):
+        """限定阁购买（如 ``/丹阁 购买 炼气丹 1``）。
+
+        直接从原始消息中提取「购买」之后的 ``<物品> [数量]``，避免依赖框架
+        普通参数只传首词的限制。解析时关闭原始消息兜底，避免把
+        ``/丹阁 购买 ...`` 整体误当物品名。
+        """
+        rest = self._extract_buy_rest(event.get_message_str())
+        item_name, quantity = self._parse_buy_target(
+            rest, event, use_raw_fallback=False)
+        if not item_name:
+            yield event.plain_result(
+                f"用法：{pavilion_label} 购买 <物品名> [数量]\n"
+                f"示例：{pavilion_label} 购买 炼气丹 1"
+            )
+            return
+        async for r in self._purchase_core(player, event, item_name, quantity, pavilion_id):
+            yield r
+
+    async def _purchase_core(self, player: Player, event: AstrMessageEvent,
+                            item_name: str, quantity: int, pavilion_id: str = None):
+        """购买核心逻辑（全局购买与限定阁购买共用）。
+
+        ``pavilion_id`` 指定时只在该阁内查找；为 ``None`` 时在所有阁查找。
+        """
+        found_pavilion, target_item = await self._find_item_in_pavilions(item_name, pavilion_id)
         if not target_item:
-            yield event.plain_result(f"没有找到【{item_name}】，请检查物品名称或等待刷新。")
+            if pavilion_id:
+                yield event.plain_result(
+                    f"【{item_name}】不在本阁出售或已售罄，请检查名称或等待刷新。")
+            else:
+                yield event.plain_result(f"没有找到【{item_name}】，请检查物品名称或等待刷新。")
             return
 
         stock = target_item.get('stock', 0)
@@ -226,7 +300,7 @@ class ShopHandler:
                 )
                 return
 
-            reserved, _, remaining = await self.db.decrement_shop_item_stock(pavilion_id, item_name, quantity, external_transaction=True)
+            reserved, _, remaining = await self.db.decrement_shop_item_stock(found_pavilion, item_name, quantity, external_transaction=True)
             if not reserved:
                 await self.db.conn.rollback()
                 yield event.plain_result(f"【{item_name}】已售罄，请等待刷新。")

@@ -765,22 +765,22 @@ class XiuXianPlugin(Star):
         async for r in self.pill_handler.handle_pill_info(event, pill_name):
             yield r
 
-    @filter.command(CMD_PILL_PAVILION, "查看丹阁丹药")
+    @filter.command(CMD_PILL_PAVILION, "查看丹阁丹药 / 丹阁 购买 物品 数量")
     @require_whitelist
-    async def handle_pill_pavilion(self, event: AstrMessageEvent):
-        async for r in self.shop_handler.handle_pill_pavilion(event):
+    async def handle_pill_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        async for r in self.shop_handler.handle_pill_pavilion(event, args):
             yield r
 
-    @filter.command(CMD_WEAPON_PAVILION, "查看器阁武器")
+    @filter.command(CMD_WEAPON_PAVILION, "查看器阁武器 / 器阁 购买 物品 数量")
     @require_whitelist
-    async def handle_weapon_pavilion(self, event: AstrMessageEvent):
-        async for r in self.shop_handler.handle_weapon_pavilion(event):
+    async def handle_weapon_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        async for r in self.shop_handler.handle_weapon_pavilion(event, args):
             yield r
 
-    @filter.command(CMD_TREASURE_PAVILION, "查看百宝阁物品")
+    @filter.command(CMD_TREASURE_PAVILION, "查看百宝阁物品 / 百宝阁 购买 物品 数量")
     @require_whitelist
-    async def handle_treasure_pavilion(self, event: AstrMessageEvent):
-        async for r in self.shop_handler.handle_treasure_pavilion(event):
+    async def handle_treasure_pavilion(self, event: AstrMessageEvent, args: str = ""):
+        async for r in self.shop_handler.handle_treasure_pavilion(event, args):
             yield r
 
     @filter.command(CMD_ITEM_INFO, "查看物品详细效果")
