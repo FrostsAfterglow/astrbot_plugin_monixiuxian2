@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Tuple
 from astrbot.api import AstrBotConfig, logger
 from ..config_manager import ConfigManager
 from ..models import Item
+from ..utils.config_values import as_float
 
 class ShopManager:
     """商店管理器，负责商店物品生成、刷新和购买"""
@@ -223,8 +224,8 @@ class ShopManager:
         selected_items = self._weighted_random_choice(all_items, count)
 
         # 获取折扣配置
-        discount_min = self.config.get("SHOP_DISCOUNT_MIN", 0.8)
-        discount_max = self.config.get("SHOP_DISCOUNT_MAX", 1.2)
+        discount_min = as_float(self.config.get("SHOP_DISCOUNT_MIN", 0.8), 0.8)
+        discount_max = as_float(self.config.get("SHOP_DISCOUNT_MAX", 1.2), 1.2)
 
         # 生成商店物品
         shop_items = []
@@ -264,8 +265,8 @@ class ShopManager:
         selected = self._weighted_random_choice(
             [{'weight': i.get('data', {}).get('shop_weight', 100), **i} for i in base_items], count
         )
-        discount_min = self.config.get("SHOP_DISCOUNT_MIN", 0.8)
-        discount_max = self.config.get("SHOP_DISCOUNT_MAX", 1.2)
+        discount_min = as_float(self.config.get("SHOP_DISCOUNT_MIN", 0.8), 0.8)
+        discount_max = as_float(self.config.get("SHOP_DISCOUNT_MAX", 1.2), 1.2)
         result = []
         for item in selected:
             discount = random.uniform(discount_min, discount_max)

@@ -1,14 +1,16 @@
 # handlers/player_handler.py
+import json
 import time
 import random
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import AstrBotConfig
 from ..data import DataBase
-from ..core import CultivationManager, PillManager
+from ..core import CultivationManager, PillManager, StorageRingManager
 from ..models import Player
 from ..models_extended import UserStatus
 from ..config_manager import ConfigManager
+from ..utils.config_values import as_int
 from .utils import player_required
 
 CMD_START_XIUXIAN = "我要修仙"
@@ -269,6 +271,11 @@ class PlayerHandler:
             )
             if card_result is not None:
                 yield card_result
+                # 第二张：「我的信息」配套的背包合成图，展示玩家已有的所有物品。
+                # 渲染失败时静默跳过，不影响第一张档案卡。
+                bag_result = await self._build_inventory_card(player, event)
+                if bag_result is not None:
+                    yield bag_result
                 return
 
         yield event.plain_result(reply_msg)
@@ -336,6 +343,132 @@ class PlayerHandler:
         except Exception as e:  # pragma: no cover - 渲染异常一律回退文本
             from astrbot.api import logger
             logger.warning(f"【修仙插件】图片卡片渲染失败，回退文本：{e}")
+            return None
+
+    # ---------------------------------------------------------------- 背包图片
+    @staticmethod
+    def _inv_count(value) -> int:
+        """兼容 ``int`` 与历史 ``{count: n, ...}`` 两种数量格式。"""
+        if isinstance(value, dict):
+            try:
+                return max(1, int(value.get("count", 1) or 1))
+            except (TypeError, ValueError):
+                return 1
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 1
+
+    def _inv_tag(self, name: str) -> str:
+        """从各道具配置源查品级 / 类型，作为物品名的副标签。"""
+        sources = (
+            getattr(self.config_manager, "items_data", {}),
+            getattr(self.config_manager, "weapons_data", {}),
+            getattr(self.config_manager, "pills_data", {}),
+            getattr(self.config_manager, "exp_pills_data", {}),
+            getattr(self.config_manager, "utility_pills_data", {}),
+            getattr(self.config_manager, "storage_rings_data", {}),
+        )
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            cfg = src.get(name)
+            if isinstance(cfg, dict):
+                return str(cfg.get("rank") or cfg.get("type") or "")
+        return ""
+
+    def _inv_rows(self, pairs) -> list:
+        """pairs: ``(物品名, 数量, 槽位)`` -> 卡片行数据。"""
+        rows = []
+        for name, count, slot in pairs:
+            name = str(name or "").strip()
+            if not name:
+                continue
+            tag = self._inv_tag(name)
+            if slot:
+                tag = f"{slot} · {tag}" if tag else str(slot)
+            rows.append({"name": name, "tag": tag, "count": count})
+        return rows
+
+    def _collect_inventory(self, player: Player) -> dict:
+        """汇总玩家已有的所有物品，作为第二张「背包」合成图片的数据源。"""
+        pills = player.get_pills_inventory() or {}
+        ring_items = player.get_storage_ring_items() or {}
+
+        pill_pairs = [(n, self._inv_count(c), "") for n, c in pills.items() if c]
+        ring_pairs = [(n, self._inv_count(c), "") for n, c in ring_items.items() if c]
+
+        equipped_pairs = []
+        for slot, name in (("法器", player.weapon), ("防具", player.armor),
+                           ("主修功法", player.main_technique)):
+            if name:
+                equipped_pairs.append((name, 1, slot))
+        try:
+            techniques = json.loads(player.techniques or "[]")
+        except (TypeError, ValueError):
+            techniques = []
+        if isinstance(techniques, list):
+            for t in techniques:
+                if isinstance(t, dict):
+                    t = t.get("name") or ""
+                if t:
+                    equipped_pairs.append((t, 1, "功法"))
+        if player.storage_ring:
+            equipped_pairs.append((player.storage_ring, 1, "储物戒"))
+
+        pill_rows = self._inv_rows(pill_pairs)
+        ring_rows = self._inv_rows(ring_pairs)
+        equipped_rows = self._inv_rows(equipped_pairs)
+
+        ring_info = StorageRingManager(self.db, self.config_manager).get_storage_ring_info(player)
+        ring_name = str(player.storage_ring or "基础储物戒")
+
+        all_rows = pill_rows + ring_rows + equipped_rows
+        groups = [
+            {"title": "丹药背包", "subtitle": f"PILL BAG · {len(pill_rows)} 种",
+             "color": "jade", "items": pill_rows},
+            {"title": f"储物戒藏品 · {ring_name}",
+             "subtitle": f"STORAGE RING · {len(ring_rows)} 种",
+             "color": "gold", "items": ring_rows},
+            {"title": "已装备 · 随身", "subtitle": f"EQUIPPED · {len(equipped_rows)} 件",
+             "color": "red", "items": equipped_rows},
+        ]
+        return {
+            "dao_hao": player.user_name or "无名道友",
+            "ring_name": ring_name,
+            "ring_used": ring_info.get("used", 0),
+            "ring_capacity": ring_info.get("capacity", 0),
+            "total_kinds": len({r["name"] for r in all_rows}),
+            "total_count": sum(r["count"] for r in all_rows),
+            "groups": groups,
+        }
+
+    async def _build_inventory_card(self, player, event):
+        """生成「我的信息」配套的第二张合成图片：背包。
+
+        任何异常都返回 None（静默跳过，不影响第一张档案卡）。
+        """
+        try:
+            from ..utils.image_generator import get_image_generator
+            generator = get_image_generator()
+            if not generator.is_available():
+                return None
+            payload = self._collect_inventory(player)
+            buf = await generator.generate_inventory_card(event.get_sender_id(), payload)
+            if buf is None:
+                return None
+            try:
+                from astrbot.api.all import Image as MessageImage
+                return event.chain_result([MessageImage.fromBytes(buf.getvalue())])
+            except Exception:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    f.write(buf.getvalue())
+                    path = f.name
+                return event.image_result(path)
+        except Exception as e:
+            from astrbot.api import logger
+            logger.warning(f"【修仙插件】背包图片渲染失败，跳过：{e}")
             return None
 
     @player_required
@@ -472,9 +605,12 @@ class PlayerHandler:
             )
             return
 
-        # 获取签到奖励范围配置
-        check_in_gold_min = self.config["VALUES"].get("CHECK_IN_GOLD_MIN", 50)
-        check_in_gold_max = self.config["VALUES"].get("CHECK_IN_GOLD_MAX", 500)
+        # 获取签到奖励范围配置（WebUI 可能把数值存成字符串，需归一化）
+        values_cfg = self.config.get("VALUES", {}) or {}
+        if not isinstance(values_cfg, dict):
+            values_cfg = {}
+        check_in_gold_min = as_int(values_cfg.get("CHECK_IN_GOLD_MIN", 50), 50)
+        check_in_gold_max = as_int(values_cfg.get("CHECK_IN_GOLD_MAX", 500), 500)
 
         # 确保最小值不大于最大值
         if check_in_gold_min > check_in_gold_max:

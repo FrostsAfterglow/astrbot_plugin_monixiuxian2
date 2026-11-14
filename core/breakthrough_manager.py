@@ -7,6 +7,7 @@ from astrbot.api import logger
 from ..models import Player
 from ..data import DataBase
 from ..config_manager import ConfigManager
+from ..utils.config_values import as_float, as_number_range
 
 
 class BreakthroughManager:
@@ -247,14 +248,20 @@ class BreakthroughManager:
 
         else:
             # 突破失败 - 判断是否死亡
-            death_probability_range = self.config.get("VALUES", {}).get(
-                "BREAKTHROUGH_DEATH_PROBABILITY",
-                [0.01, 0.1]  # 默认1%-10%死亡概率
-            )
+            # 配置项经 WebUI 编辑后可能变成字符串（如 ["0.01", "0.1"] 甚至
+            # "0.01,0.1"），直接 random.uniform 会抛
+            # TypeError: unsupported operand type(s) for -: 'str' and 'float'。
+            # 统一归一化后再参与运算，任何非法值回退默认 1%~10%。
+            values_cfg = self.config.get("VALUES", {}) or {}
+            if not isinstance(values_cfg, dict):
+                values_cfg = {}
+            raw_range = values_cfg.get("BREAKTHROUGH_DEATH_PROBABILITY", [0.01, 0.1])
+            low, high = as_number_range(raw_range, default=(0.01, 0.1), lo=0.0, hi=1.0)
 
-            # 随机一个死亡概率
-            death_rate = random.uniform(death_probability_range[0], death_probability_range[1])
-            death_rate = max(0.0, min(1.0, death_rate * death_rate_multiplier))
+            # 随机一个死亡概率（倍率同样归一化，避免字符串混入运算）
+            multiplier = max(0.0, as_float(death_rate_multiplier, 1.0))
+            death_rate = random.uniform(low, high)
+            death_rate = max(0.0, min(1.0, death_rate * multiplier))
             died = random.random() < death_rate
 
             if died:

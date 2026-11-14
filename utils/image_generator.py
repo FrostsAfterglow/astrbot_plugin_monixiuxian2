@@ -163,12 +163,15 @@ class ImageGenerator:
                             outline=(*C_GOLD_DARK, 90) if img.mode == "RGBA" else C_GOLD_DARK,
                             width=1)
 
-    def _background(self) -> "Image.Image":
-        """垂直渐变 + 细微星尘 + 双层边框 + 四角回纹。"""
-        img = Image.new("RGBA", (W, H), C_BG_TOP + (255,))
+    def _background(self, height: int = H) -> "Image.Image":
+        """垂直渐变 + 细微星尘 + 双层边框 + 四角回纹。
+
+        ``height`` 可自定义：背包卡片物品数量不固定，需要按内容动态增高画布。
+        """
+        img = Image.new("RGBA", (W, height), C_BG_TOP + (255,))
         d = ImageDraw.Draw(img)
-        for y in range(H):
-            t = y / (H - 1)
+        for y in range(height):
+            t = y / (height - 1)
             # 中段略微提亮，营造「灵气上浮」的层次
             glow = 12 * math.sin(math.pi * t)
             c = (
@@ -191,20 +194,20 @@ class ImageGenerator:
         # 星尘（固定种子，保证同一张卡片稳定）
         rnd = random.Random(20261112)
         for _ in range(90):
-            x, y = rnd.randint(40, W - 40), rnd.randint(40, H - 40)
+            x, y = rnd.randint(40, W - 40), rnd.randint(40, max(41, height - 40))
             r = rnd.choice([1, 1, 1, 2])
             a = rnd.randint(25, 90)
             d.ellipse((x - r, y - r, x + r, y + r), fill=(*C_GOLD, a))
 
         # 外框：双层金线
-        d.rectangle((22, 22, W - 23, H - 23), outline=C_GOLD_SOFT, width=2)
-        d.rectangle((32, 32, W - 33, H - 33), outline=(*C_GOLD_DARK, 160), width=1)
+        d.rectangle((22, 22, W - 23, height - 23), outline=C_GOLD_SOFT, width=2)
+        d.rectangle((32, 32, W - 33, height - 33), outline=(*C_GOLD_DARK, 160), width=1)
 
         # 四角回纹
         self._corner(d, 32, 32, 1, 1)
         self._corner(d, W - 32, 32, -1, 1)
-        self._corner(d, 32, H - 32, 1, -1)
-        self._corner(d, W - 32, H - 32, -1, -1)
+        self._corner(d, 32, height - 32, 1, -1)
+        self._corner(d, W - 32, height - 32, -1, -1)
         return img
 
     @staticmethod
@@ -439,6 +442,140 @@ class ImageGenerator:
                    self.font(24), C_GOLD_SOFT, anchor="ma")
         ts = time.strftime("%Y-%m-%d %H:%M")
         self._text(d, (W // 2, foot_base + 74), f"档案生成于 {ts}",
+                   self.font(18), C_MUTED, anchor="ma")
+
+        out = BytesIO()
+        img.convert("RGB").save(out, format="PNG", optimize=True)
+        out.seek(0)
+        return out
+
+    # ---------------------------------------------------------------- 背包卡片
+    async def generate_inventory_card(self, user_id: str, payload: Dict) -> Optional[BytesIO]:
+        """异步生成「乾坤囊 · 背包」卡片，返回 PNG 字节流；失败返回 None。
+
+        payload 结构::
+
+            {
+              "dao_hao": "某某",
+              "ring_name": "基础储物戒",
+              "ring_used": 3, "ring_capacity": 20,
+              "total_kinds": 8, "total_count": 26,
+              "groups": [
+                {"title": "丹药背包", "subtitle": "PILLS · 3 种", "color": "jade",
+                 "items": [{"name": "炼气丹", "tag": "凡品", "count": 5}, ...]},
+                ...
+              ]
+            }
+        """
+        if not self.is_available():
+            return None
+        try:
+            return await asyncio.to_thread(self._draw_inventory_sync, str(user_id), payload or {})
+        except Exception as e:  # pragma: no cover
+            logger.error(f"【修仙插件】生成背包卡片失败：{e}")
+            return None
+
+    def _inventory_layout(self, m: Dict):
+        """按分组与物品条数计算画布高度和每个分组的纵向区间。"""
+        groups = m.get("groups") or []
+        cols = 2
+        row_h = 50
+        y = 440  # 顶部标题 + 身份行 + 统计条 + 储物戒名占用的高度
+        boxes = []
+        for gp in groups:
+            items = gp.get("items") or []
+            rows = max(1, math.ceil(len(items) / cols))
+            h = 86 + rows * row_h + 22
+            boxes.append((y, y + h, gp, rows))
+            y += h + 18
+        return max(900, y + 130), boxes, cols, row_h
+
+    def _draw_inventory_sync(self, user_id: str, m: Dict) -> BytesIO:
+        height, boxes, cols, row_h = self._inventory_layout(m)
+        img = self._background(height)
+        d = ImageDraw.Draw(img)
+
+        # ===== 顶部标题 =====
+        self._taiji(img, 132, 132, 46)
+        self._text(d, (216, 100), "乾 坤 囊", self.font(62), C_GOLD, anchor="lm", stroke=2)
+        self._text(d, (218, 158), "道友背包  ·  INVENTORY",
+                   self.font(21), C_GOLD_SOFT, anchor="lm")
+        d.line([(48, 196), (W - 48, 196)], fill=C_GOLD_DARK, width=1)
+
+        dao = str(m.get("dao_hao") or "无名道友")
+        self._text(d, (60, 232), self._fit(d, dao, self.font(30), 560),
+                   self.font(30), C_CREAM, anchor="lm")
+        self._text(d, (W - 60, 232), f"ID {self._fit(d, user_id, self.font(20), 240)}",
+                   self.font(20), C_MUTED, anchor="rm")
+
+        # ===== 统计条 =====
+        sb = (48, 264, W - 48, 372)
+        self._panel(img, sb, radius=16)
+        stats = [
+            ("物品种类", str(m.get("total_kinds", 0)), C_GOLD),
+            ("物品总数", str(m.get("total_count", 0)), C_GOLD),
+            ("储物戒格数", f"{m.get('ring_used', 0)}/{m.get('ring_capacity', 0)}", C_JADE),
+        ]
+        sw = (sb[2] - sb[0] - 40) // 3
+        for i, (label, val, col) in enumerate(stats):
+            cx = sb[0] + 20 + i * sw + sw // 2
+            self._text(d, (cx, sb[1] + 30), label, self.font(21), C_MUTED, anchor="ma")
+            self._text(d, (cx, sb[1] + 68), self._fit(d, val, self.font(34), sw - 20),
+                       self.font(34), col, anchor="ma", stroke=1)
+        self._text(d, (W // 2, 406),
+                   f"当前储物戒：{self._fit(d, str(m.get('ring_name') or '基础储物戒'), self.font(21), 700)}",
+                   self.font(21), C_GOLD_SOFT, anchor="ma")
+
+        # ===== 分组清单 =====
+        palette = {
+            "jade": C_JADE, "gold": C_GOLD, "red": C_RED,
+            "cream": C_CREAM, "muted": C_MUTED,
+        }
+        for y0, y1, gp, rows in boxes:
+            self._panel(img, (48, y0, W - 48, y1))
+            d = ImageDraw.Draw(img)
+            accent = palette.get(str(gp.get("color") or "gold"), C_GOLD)
+            cx, cy = 88, y0 + 40
+            d.polygon([(cx, cy - 9), (cx + 9, cy), (cx, cy + 9), (cx - 9, cy)], fill=accent)
+            self._text(d, (110, y0 + 40), str(gp.get("title") or "物品"),
+                       self.font(30), accent, anchor="lm", stroke=1)
+            self._text(d, (W - 78, y0 + 40), str(gp.get("subtitle") or ""),
+                       self.font(19), C_MUTED, anchor="rm")
+            d.line([(78, y0 + 70), (W - 78, y0 + 70)], fill=C_DIVIDER, width=1)
+
+            items = gp.get("items") or []
+            content_y = y0 + 86
+            col_w = (W - 96 - 44) // cols
+            if not items:
+                self._text(d, (W // 2, content_y + 18), "（空）",
+                           self.font(23), C_MUTED, anchor="ma")
+            for idx, it in enumerate(items):
+                col, row = idx % cols, idx // cols
+                x = 48 + 22 + col * col_w
+                yy = content_y + row * row_h
+                name = str(it.get("name") or "")
+                tag = str(it.get("tag") or "").strip()
+                label = f"{name} · {tag}" if tag else name
+                f_name = self.font(24)
+                self._text(d, (x + 8, yy + row_h // 2),
+                           self._fit(d, label, f_name, col_w - 120),
+                           f_name, C_CREAM, anchor="lm")
+                self._text(d, (x + col_w - 12, yy + row_h // 2),
+                           f"×{it.get('count', 1)}", self.font(23), accent, anchor="rm")
+                d.line([(x + 4, yy + row_h - 6), (x + col_w - 16, yy + row_h - 6)],
+                       fill=(*C_DIVIDER, 90), width=1)
+            for c in range(1, cols):
+                xx = 48 + 22 + c * col_w
+                d.line([(xx, content_y + 2), (xx, content_y + rows * row_h - 12)],
+                       fill=(*C_DIVIDER, 80), width=1)
+
+        # ===== 页脚 =====
+        foot = height - 130
+        d.line([(48, foot), (W - 48, foot)], fill=C_GOLD_DARK, width=1)
+        self._text(d, (W // 2, foot + 30), "囊括天地 · 万物皆备于我",
+                   self.font(24), C_GOLD_SOFT, anchor="ma")
+        self._text(d, (W // 2, foot + 74),
+                   f"背包生成于 {time.strftime('%Y-%m-%d %H:%M')}",
                    self.font(18), C_MUTED, anchor="ma")
 
         out = BytesIO()
